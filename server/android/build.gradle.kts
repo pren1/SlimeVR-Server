@@ -122,8 +122,7 @@ android {
 		targetSdk = 33
 
 		// Defines the version number of your app.
-		versionCode = extra["gitVersionCode"] as? Int
-
+		versionCode = 1
 		// Defines a user-friendly version name for your app.
 		versionName = extra["gitVersionName"] as? String
 

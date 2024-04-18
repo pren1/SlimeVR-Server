@@ -23,11 +23,16 @@ import java.nio.ByteOrder
 import java.util.Random
 import java.util.function.Consumer
 
+import io.github.axisangles.ktmath.Quaternion
+import java.io.PrintWriter
+import java.net.ServerSocket
+import java.net.Socket
 /**
  * Receives trackers data by UDP using extended owoTrack protocol.
  */
 class TrackersUDPServer(private val port: Int, name: String, private val trackersConsumer: Consumer<Tracker>) : Thread(name) {
 	private val random = Random()
+	private val server = AccelerationServer(9901)
 	private val connections: MutableList<UDPDevice> = FastList()
 	private val connectionsByAddress: MutableMap<SocketAddress, UDPDevice> = HashMap()
 	private val connectionsByMAC: MutableMap<String, UDPDevice> = HashMap()
@@ -213,6 +218,7 @@ class TrackersUDPServer(private val port: Int, name: String, private val tracker
 
 	override fun run() {
 		val serialBuffer2 = StringBuilder()
+		server.start()
 		try {
 			socket = DatagramSocket(port)
 			var prevPacketTime = System.currentTimeMillis()
@@ -314,6 +320,7 @@ class TrackersUDPServer(private val port: Int, name: String, private val tracker
 			is UDPPacket3Handshake -> setUpNewConnection(received, packet)
 
 			is RotationPacket -> {
+//				LogManager.info("[TrackerServer+] Rotation value")
 				var rot = packet.rotation
 				rot = AXES_OFFSET.times(rot)
 				tracker = connection?.getTracker(packet.sensorId)
@@ -327,6 +334,9 @@ class TrackersUDPServer(private val port: Int, name: String, private val tracker
 				if (tracker == null) return
 				var rot17 = packet.rotation
 				rot17 = AXES_OFFSET * rot17
+
+				LogManager.info("[${tracker.name}] Rotation value: $rot17")
+				server.sendRotationData(tracker.name, rot17)
 				when (packet.dataType) {
 					UDPPacket17RotationData.DATA_TYPE_NORMAL -> {
 						tracker.setRotation(rot17)
@@ -351,6 +361,8 @@ class TrackersUDPServer(private val port: Int, name: String, private val tracker
 				if (tracker == null) return
 				// Switch x and y around to adjust for different axes
 				tracker.setAcceleration(Vector3(packet.acceleration.y, packet.acceleration.x, packet.acceleration.z))
+				LogManager.info("[${tracker.name}] Acceleration value: ${packet.acceleration}")
+				server.sendAccelerationData(tracker.name, Vector3(packet.acceleration.y, packet.acceleration.x, packet.acceleration.z))
 			}
 
 			is UDPPacket10PingPong -> {
@@ -512,3 +524,62 @@ class TrackersUDPServer(private val port: Int, name: String, private val tracker
 		}
 	}
 }
+
+class AccelerationServer(port: Int) {
+	private val serverSocket: ServerSocket = ServerSocket(port)
+	private var clientSocket: Socket? = null
+	private var out: PrintWriter? = null
+
+	fun start() {
+		println("Server is running on port ${serverSocket.localPort}")
+
+		Thread {
+			while (true) {
+				clientSocket = serverSocket.accept()
+				println("Connected to client ${clientSocket!!.inetAddress.hostAddress}")
+
+				clientSocket?.let { socket ->
+					out = PrintWriter(socket.getOutputStream(), true)
+					// Keep the connection open to listen for commands or manage multiple messages
+					val inputStream = socket.getInputStream()
+					val bufferedReader = inputStream.bufferedReader()
+
+					try {
+						while (true) {
+							val line = bufferedReader.readLine() ?: break // Read until client disconnects
+							if (line == "SEND") {
+								// Additional commands can be processed here
+							}
+						}
+					} finally {
+						socket.close()
+						out = null
+						println("Client disconnected")
+					}
+				}
+			}
+		}.start()
+	}
+
+	fun sendAccelerationData(sensorId: String, acceleration: Vector3) {
+		if (out != null) {
+			val accelerationString = "[$sensorId] Acceleration value: $acceleration"
+			out!!.println(accelerationString)
+		} else {
+			println("No connected clients to send data to.")
+		}
+	}
+
+	fun sendRotationData(sensorId: String, rotation: Quaternion) {
+		if (out != null) {
+			val rotationString = "[$sensorId] Rotation value: $rotation"
+			out!!.println(rotationString)
+		} else {
+			println("No connected clients to send data to.")
+		}
+	}
+}
+
+//data class Vector3(val x: Double, val y: Double, val z: Double) {
+//	override fun toString(): String = "x: $x, y: $y, z: $z"
+//}
